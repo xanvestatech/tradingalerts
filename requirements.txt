@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pandas
+python-dotenv
+kiteconnect
+python-multipart
+boto3
+paramiko
+redis
+pytest
+pytest-mock
+psutil
+pytz
