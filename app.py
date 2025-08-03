@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 from fastapi import status
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
+from pydantic import ValidationError
 import pandas as pd
 import logging
 import os
@@ -79,6 +80,42 @@ API_KEY = os.getenv("KITE_API_KEY")
 
 kite = zerodha_login()
 
+def build_instrument_cache_on_login(kite):
+    """Build instrument cache immediately after login with minimal changes."""
+    segments = ["NFO", "MCX"]
+    cache_results = []
+    
+    for segment in segments:
+        try:
+            # Check if cache already exists
+            existing_cache = get_instrument_cache(segment)
+            if existing_cache is not None:
+                cache_results.append(f"✅ {segment} cache already exists")
+                cleanup_dataframes(existing_cache)
+                continue
+            
+            # Build cache for this segment
+            logging.info(f"[Login] Building instrument cache for {segment}...")
+            instruments = kite.instruments(exchange=segment)
+            df = pd.DataFrame(instruments)
+            set_instrument_cache(segment, df)
+            cache_results.append(f"✅ {segment} cache built ({len(df)} instruments)")
+            
+            # Clean up DataFrame immediately
+            cleanup_dataframes(df)
+            logging.info(f"[Login] Successfully built and cached {len(instruments)} instruments for {segment}")
+            
+        except Exception as e:
+            error_msg = f"❌ {segment} cache failed: {str(e)}"
+            cache_results.append(error_msg)
+            logging.error(f"[Login] Failed to build instrument cache for {segment}: {e}")
+    
+    # Force garbage collection after cache building
+    force_gc()
+    
+    # Return status message for UI
+    return "Instrument cache: " + " | ".join(cache_results)
+
 class WebhookPayload(BaseModel):
     action: str
     symbol: str
@@ -114,9 +151,9 @@ async def lifespan(app: FastAPI):
         logging.info("✅ Account configured successfully")
         logging.info("Account will need authentication via /token endpoint")
 
-    # --- Skip instrument cache building at startup (will be built on first webhook) ---
-    logging.info("[Startup] Skipping instrument cache building - will be populated on first webhook request")
-    logging.info("[Startup] Instrument cache will be built when account is authenticated and first trade occurs")
+    # --- Skip instrument cache building at startup (will be built when user adds token) ---
+    logging.info("[Startup] Skipping instrument cache building - will be populated when user adds access token")
+    logging.info("[Startup] Instrument cache will be built immediately after successful login via /token endpoint")
 
     async def rollover_check(kite, account_name):
         segments = ["NFO", "MCX"]
@@ -355,9 +392,12 @@ def save_and_refresh_token(token: str = Form(...)) -> HTMLResponse:
             kite.set_access_token(access_token)
             logging.info("✅ Global kite object updated with new access token")
             
+            # ✅ BUILD INSTRUMENT CACHE NOW THAT WE HAVE AUTHENTICATED ACCESS
+            cache_status = build_instrument_cache_on_login(kite)
+            
             logging.info("Access token validated and saved successfully.")
             user_info = f"User: {profile.get('user_name', 'N/A')} ({profile.get('user_id', 'N/A')})"
-            return HTMLResponse(content=f"<b>Token is valid! Login successful.</b><br>{user_info}<br>Account is now ready for trading.", status_code=200)
+            return HTMLResponse(content=f"<b>Token is valid! Login successful.</b><br>{user_info}<br>{cache_status}<br>Account is now ready for trading.", status_code=200)
         except Exception as ve:
             logging.error(f"Token saved but validation failed: {ve}")
             return HTMLResponse(content=f"<b>Invalid token:</b> An internal error occurred. Please check the server logs.", status_code=400)
