@@ -108,20 +108,17 @@ async def get_positions_and_holdings_direct(kite, segment: str, tradingsymbol: s
             holdings, positions = await asyncio.gather(get_holdings(), get_positions())
             
             # Check holdings first
-            existing_position = next((h for h in holdings if h["tradingsymbol"] == tradingsymbol), None)
-            qty_held = existing_position["quantity"] if existing_position else 0
-            t1_qty = existing_position["t1_quantity"] if existing_position and "t1_quantity" in existing_position else 0
-            
-            if qty_held == 0 and t1_qty > 0:
-                qty_held = t1_qty
-                
-            # If still no holdings, check positions
-            if qty_held == 0:
-                existing_position = next(
-                    (p for p in positions if p["tradingsymbol"] == tradingsymbol and p["exchange"] == segment), 
-                    None
-                )
-                qty_held = existing_position["quantity"] if existing_position else 0
+            existing_holdings = next((h for h in holdings if h["tradingsymbol"] == tradingsymbol), None)
+            qty_held = existing_holdings["quantity"] if existing_holdings else 0
+            qty_held += existing_holdings["t1_quantity"] if existing_holdings and "t1_quantity" in existing_holdings else 0
+
+            existing_position = next(
+                (p for p in positions if p["tradingsymbol"] == tradingsymbol and p["exchange"] == segment), 
+                None
+            )
+            qty_positions = existing_position["quantity"] if existing_position else 0
+            if(qty_positions > 0):
+                qty_held += qty_positions
                 
             result = (qty_held, existing_position or {})
         except asyncio.TimeoutError:
