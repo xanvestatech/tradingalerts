@@ -199,7 +199,14 @@ async def lifespan(app: FastAPI):
                 
                 # Check if account is authenticated before making API calls
                 try:
-                    positions = kite.positions()["net"]
+                    # Use async executor to prevent blocking event loop
+                    positions = await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(None, lambda: kite.positions()["net"]),
+                        timeout=5.0  # 5 second timeout
+                    )
+                except asyncio.TimeoutError:
+                    logging.warning(f"{account_name} rollover check skipped - API timeout")
+                    continue
                 except Exception as e:
                     logging.warning(f"{account_name} rollover check skipped - account not authenticated: {e}")
                     continue  # Skip this iteration and try again next time
@@ -271,12 +278,12 @@ async def lifespan(app: FastAPI):
 
     # Start rollover check for account and store task reference
     try:
-        rollover_task = asyncio.create_task(rollover_check(kite, "Account"))
+        #rollover_task = asyncio.create_task(rollover_check(kite, "Account"))
         
         # Start memory monitoring task
         memory_task = asyncio.create_task(memory_manager.monitor_memory(interval_seconds=300))
         
-        background_tasks.extend([rollover_task, memory_task])
+        background_tasks.extend([memory_task])
         
         logging.info("Background rollover and memory monitoring tasks started successfully")
         yield
