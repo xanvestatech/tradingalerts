@@ -24,6 +24,7 @@ import uuid  # For generating request IDs
 import functools
 import contextvars
 import time  # For performance monitoring
+from dashboard import router as dashboard_router
 
 # Setup centralized logging to prevent duplicate handlers
 setup_logging()
@@ -307,6 +308,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Include dashboard routes
+app.include_router(dashboard_router)
+
 # Note: Logging is now handled by setup_logging() called at the top
 # The duplicate logging configuration has been removed to prevent memory leaks
 
@@ -500,7 +504,7 @@ async def webhook(
         webhook_start_time = time.time()
 
         # Process account with request ID context
-        result = await process_account_optimized(kite, "account", tv_symbol, segment, action, price, quantity)
+        result = await process_account_optimized(kite, "account", tv_symbol, segment, action, price, quantity, time_received, req_id)
         
         log_with_request_id('INFO', 
             "Account processing completed",

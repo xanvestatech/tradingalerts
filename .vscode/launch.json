@@ -12,6 +12,15 @@
             ],
             "envFile": "${workspaceFolder}/.env",
             "justMyCode": false
+        },
+        {
+            "name": "Debug historical_data.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/historical_data.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "envFile": "${workspaceFolder}/.env"
         }
     ]
 }

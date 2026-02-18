@@ -135,7 +135,8 @@ async def get_positions_and_holdings_direct(kite, segment: str, tradingsymbol: s
     return result
 
 async def process_account_optimized(kite, account_name: str, tv_symbol: str, segment: str, 
-                                  action: str, price: float, quantity: int) -> Dict[str, Any]:
+                                  action: str, price: float, quantity: int, 
+                                  webhook_timestamp: str = None, request_id: str = None) -> Dict[str, Any]:
     """Optimized account processing with reduced API calls and parallel execution."""
     
     start_time = time.time()
@@ -236,7 +237,8 @@ async def process_account_optimized(kite, account_name: str, tv_symbol: str, seg
                 # Import here to avoid circular imports
                 from orders import place_order
                 order_id, error = await asyncio.get_event_loop().run_in_executor(
-                    None, place_order, kite, tradingsymbol, action, price, segment, total_quantity
+                    None, place_order, kite, tradingsymbol, action, price, segment, total_quantity,
+                    webhook_timestamp, tv_symbol, request_id
                 )
                 processing_time = (time.time() - start_time) * 1000
                 if order_id:
@@ -256,7 +258,8 @@ async def process_account_optimized(kite, account_name: str, tv_symbol: str, seg
                 # Import here to avoid circular imports
                 from orders import place_order
                 order_id, error = await asyncio.get_event_loop().run_in_executor(
-                    None, place_order, kite, tradingsymbol, action, price, segment, sell_quantity
+                    None, place_order, kite, tradingsymbol, action, price, segment, sell_quantity,
+                    webhook_timestamp, tv_symbol, request_id
                 )
                 processing_time = (time.time() - start_time) * 1000
                 if order_id:
