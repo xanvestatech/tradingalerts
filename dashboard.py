@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, Request, Query, Body
 from fastapi.responses import HTMLResponse, JSONResponse
 from database import order_db
 from typing import Optional
@@ -219,7 +219,6 @@ def trading_dashboard():
             .tabs {
                 display: flex;
                 background: #ecf0f1;
-                border-radius: 10px 10px 0 0;
             }
             
             .tab {
@@ -271,11 +270,11 @@ def trading_dashboard():
     <body>
         <div class="container">
             <div class="header">
-                <h1>📈 Trading Dashboard</h1>
-                <p>Real-time Order Tracking & PnL Analysis</p>
+                <h1>Trading Dashboard</h1>
+                <p>Real-time Order Tracking &amp; PnL Analysis</p>
             </div>
             
-            <button class="refresh-btn" onclick="refreshData()">🔄 Refresh Data</button>
+            <button class="refresh-btn" onclick="refreshData()">Refresh Data</button>
             
             <div class="stats-grid" id="statsGrid">
                 <div class="loading">Loading statistics...</div>
@@ -283,10 +282,10 @@ def trading_dashboard():
             
             <div class="section">
                 <div class="tabs">
-                    <button class="tab active" onclick="showTab('orders')">📋 Recent Orders</button>
-                    <button class="tab" onclick="showTab('pnl')">💰 PnL Summary</button>
-                    <button class="tab" onclick="showTab('positions')">📊 Current Positions</button>
-                    <button class="tab" onclick="showTab('database')">🗄️ Database</button>
+                    <button class="tab active" onclick="showTab('orders', this)">Recent Orders</button>
+                    <button class="tab" onclick="showTab('pnl', this)">PnL Summary</button>
+                    <button class="tab" onclick="showTab('positions', this)">Current Positions</button>
+                    <button class="tab" onclick="showTab('database', this)">Database</button>
                 </div>
                 
                 <div class="tab-content active" id="orders">
@@ -320,17 +319,17 @@ def trading_dashboard():
                         </div>
                         
                         <div style="margin-top: 30px;">
-                            <h3>🗑️ Database Management</h3>
+                            <h3>Database Management</h3>
                             <div style="margin-top: 20px;">
                                 <button class="clear-btn" onclick="clearTestData()" style="background: #f39c12; margin-right: 10px;">
-                                    🧪 Clear Test Data Only
+                                    Clear Test Data Only
                                 </button>
                                 <button class="clear-btn danger" onclick="clearAllData()" style="background: #e74c3c;">
-                                    ⚠️ Clear All Data
+                                    &#9888; Clear All Data
                                 </button>
                             </div>
                             <div style="margin-top: 15px; padding: 15px; background: #fff3cd; border-radius: 5px; color: #856404;">
-                                <strong>⚠️ Warning:</strong>
+                                <strong>&#9888; Warning:</strong>
                                 <ul style="margin: 10px 0 0 20px;">
                                     <li><strong>Clear Test Data:</strong> Removes only forward testing orders (FORWARD_TEST_SUCCESS status)</li>
                                     <li><strong>Clear All Data:</strong> Removes ALL orders, trades, and PnL data permanently</li>
@@ -345,30 +344,49 @@ def trading_dashboard():
         
         <script>
             let currentTab = 'orders';
-            
-            function showTab(tabName) {
-                // Hide all tab contents
-                document.querySelectorAll('.tab-content').forEach(content => {
+            let globalErrorDiv = null;
+
+            // FIX 1: escapeHtml helper to prevent XSS from unescaped data
+            function escapeHtml(str) {
+                return String(str == null ? '' : str)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+            }
+
+            // FIX 2: showTab now accepts the clicked element explicitly instead of
+            //         relying on the implicit `event` global (which is unreliable /
+            //         fails in strict mode and some browsers).
+            function showTab(tabName, el) {
+                document.querySelectorAll('.tab-content').forEach(function(content) {
                     content.classList.remove('active');
                 });
                 
-                // Remove active class from all tabs
-                document.querySelectorAll('.tab').forEach(tab => {
+                document.querySelectorAll('.tab').forEach(function(tab) {
                     tab.classList.remove('active');
                 });
                 
-                // Show selected tab content
                 document.getElementById(tabName).classList.add('active');
-                
-                // Add active class to clicked tab
-                event.target.classList.add('active');
+                el.classList.add('active');
                 
                 currentTab = tabName;
+
+                // Load content for the newly selected tab
+                if (tabName === 'orders') {
+                    loadOrders();
+                } else if (tabName === 'pnl') {
+                    loadPnL();
+                } else if (tabName === 'positions') {
+                    loadPositions();
+                } else if (tabName === 'database') {
+                    loadDatabaseStats();
+                }
             }
             
             function formatCurrency(value) {
-                if (value === null || value === undefined) return '₹0.00';
-                return '₹' + parseFloat(value).toLocaleString('en-IN', {
+                if (value === null || value === undefined) return '\\u20b90.00';
+                return '\\u20b9' + parseFloat(value).toLocaleString('en-IN', {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2
                 });
@@ -376,7 +394,7 @@ def trading_dashboard():
             
             function formatDateTime(dateString) {
                 if (!dateString) return '-';
-                const date = new Date(dateString);
+                var date = new Date(dateString);
                 return date.toLocaleString('en-IN', {
                     year: 'numeric',
                     month: 'short',
@@ -399,30 +417,46 @@ def trading_dashboard():
                 if (value < 0) return 'negative';
                 return 'neutral';
             }
+
+            // FIX 3: showGlobalError replaces any existing error banner instead of
+            //         prepending a new one on every failure (stacking issue).
+            function showGlobalError(message) {
+                if (!globalErrorDiv) {
+                    globalErrorDiv = document.createElement('div');
+                    globalErrorDiv.className = 'error';
+                    globalErrorDiv.style.margin = '10px 20px';
+                    document.querySelector('.container').prepend(globalErrorDiv);
+                }
+                globalErrorDiv.textContent = message;
+            }
+
+            function clearGlobalError() {
+                if (globalErrorDiv) {
+                    globalErrorDiv.textContent = '';
+                }
+            }
             
             async function loadStats() {
                 try {
-                    const response = await fetch('/api/portfolio-summary');
-                    const data = await response.json();
+                    var response = await fetch('/api/portfolio-summary');
+                    var data = await response.json();
                     
-                    const statsHtml = `
-                        <div class="stat-card">
-                            <div class="stat-value neutral">${data.total_symbols || 0}</div>
-                            <div class="stat-label">Total Symbols</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value ${getPnLClass(data.total_realized_pnl || 0)}">${formatCurrency(data.total_realized_pnl || 0)}</div>
-                            <div class="stat-label">Total Realized P&L</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value neutral">${data.total_positions || 0}</div>
-                            <div class="stat-label">Open Positions</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value neutral">${data.total_orders || 0}</div>
-                            <div class="stat-label">Total Orders</div>
-                        </div>
-                    `;
+                    var statsHtml = '<div class="stat-card">'
+                        + '<div class="stat-value neutral">' + escapeHtml(data.total_symbols || 0) + '</div>'
+                        + '<div class="stat-label">Total Symbols</div>'
+                        + '</div>'
+                        + '<div class="stat-card">'
+                        + '<div class="stat-value ' + getPnLClass(data.total_realized_pnl || 0) + '">' + formatCurrency(data.total_realized_pnl || 0) + '</div>'
+                        + '<div class="stat-label">Total Realized P&amp;L</div>'
+                        + '</div>'
+                        + '<div class="stat-card">'
+                        + '<div class="stat-value neutral">' + escapeHtml(data.total_positions || 0) + '</div>'
+                        + '<div class="stat-label">Open Positions</div>'
+                        + '</div>'
+                        + '<div class="stat-card">'
+                        + '<div class="stat-value neutral">' + escapeHtml(data.total_orders || 0) + '</div>'
+                        + '<div class="stat-label">Total Orders</div>'
+                        + '</div>';
                     
                     document.getElementById('statsGrid').innerHTML = statsHtml;
                 } catch (error) {
@@ -432,91 +466,75 @@ def trading_dashboard():
             
             async function loadOrders() {
                 try {
-                    const response = await fetch('/api/recent-orders?limit=50');
-                    const orders = await response.json();
+                    var response = await fetch('/api/recent-orders?limit=50');
                     
-                    if (orders.length === 0) {
+                    if (!response.ok) {
+                        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                    }
+                    
+                    var orders = await response.json();
+                    
+                    if (!orders.length) {
                         document.getElementById('ordersTable').innerHTML = '<p>No orders found</p>';
                         return;
                     }
                     
-                    let tableHtml = `
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Time</th>
-                                    <th>Symbol</th>
-                                    <th>Type</th>
-                                    <th>Qty</th>
-                                    <th>Price</th>
-                                    <th>Status</th>
-                                    <th>Order ID</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                    `;
+                    var tableHtml = '<table>'
+                        + '<thead><tr>'
+                        + '<th>Time</th><th>Symbol</th><th>Type</th>'
+                        + '<th>Qty</th><th>Price</th><th>Status</th><th>Order ID</th>'
+                        + '</tr></thead><tbody>';
                     
-                    orders.forEach(order => {
-                        tableHtml += `
-                            <tr>
-                                <td>${formatDateTime(order.timestamp)}</td>
-                                <td>${order.tradingsymbol}</td>
-                                <td><span class="${order.transaction_type === 'BUY' ? 'positive' : 'negative'}">${order.transaction_type}</span></td>
-                                <td>${order.quantity}</td>
-                                <td>${order.price ? formatCurrency(order.price) : 'Market'}</td>
-                                <td><span class="${getStatusClass(order.status)}">${order.status}</span></td>
-                                <td>${order.order_id || '-'}</td>
-                            </tr>
-                        `;
+                    // FIX 4: All user-supplied values are escaped with escapeHtml()
+                    //         before being inserted into innerHTML to prevent XSS.
+                    orders.forEach(function(order) {
+                        var typeClass = order.transaction_type === 'BUY' ? 'positive' : 'negative';
+                        tableHtml += '<tr>'
+                            + '<td>' + formatDateTime(order.timestamp) + '</td>'
+                            + '<td>' + escapeHtml(order.tradingsymbol) + '</td>'
+                            + '<td><span class="' + typeClass + '">' + escapeHtml(order.transaction_type) + '</span></td>'
+                            + '<td>' + escapeHtml(order.quantity) + '</td>'
+                            + '<td>' + (order.price ? formatCurrency(order.price) : 'Market') + '</td>'
+                            + '<td><span class="' + getStatusClass(order.status) + '">' + escapeHtml(order.status) + '</span></td>'
+                            + '<td>' + escapeHtml(order.order_id || '-') + '</td>'
+                            + '</tr>';
                     });
                     
                     tableHtml += '</tbody></table>';
                     document.getElementById('ordersTable').innerHTML = tableHtml;
+                    
                 } catch (error) {
-                    document.getElementById('ordersTable').innerHTML = '<div class="error">Failed to load orders</div>';
+                    document.getElementById('ordersTable').innerHTML = '<div class="error">Failed to load orders: ' + escapeHtml(error.message) + '</div>';
                 }
             }
             
             async function loadPnL() {
                 try {
-                    const response = await fetch('/api/portfolio-summary');
-                    const data = await response.json();
+                    var response = await fetch('/api/portfolio-summary');
+                    var data = await response.json();
                     
-                    if (!data.symbols || data.symbols.length === 0) {
+                    if (!data.symbols || !data.symbols.length) {
                         document.getElementById('pnlTable').innerHTML = '<p>No PnL data available</p>';
                         return;
                     }
                     
-                    let tableHtml = `
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Symbol</th>
-                                    <th>Exchange</th>
-                                    <th>Buy Qty</th>
-                                    <th>Sell Qty</th>
-                                    <th>Position</th>
-                                    <th>Avg Buy</th>
-                                    <th>Avg Sell</th>
-                                    <th>Realized P&L</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                    `;
+                    var tableHtml = '<table>'
+                        + '<thead><tr>'
+                        + '<th>Symbol</th><th>Exchange</th><th>Buy Qty</th><th>Sell Qty</th>'
+                        + '<th>Position</th><th>Avg Buy</th><th>Avg Sell</th><th>Realized P&amp;L</th>'
+                        + '</tr></thead><tbody>';
                     
-                    data.symbols.forEach(symbol => {
-                        tableHtml += `
-                            <tr>
-                                <td>${symbol.tradingsymbol}</td>
-                                <td>${symbol.exchange}</td>
-                                <td>${symbol.total_buy_qty}</td>
-                                <td>${symbol.total_sell_qty}</td>
-                                <td><span class="${getPnLClass(symbol.current_position)}">${symbol.current_position}</span></td>
-                                <td>${formatCurrency(symbol.avg_buy_price)}</td>
-                                <td>${formatCurrency(symbol.avg_sell_price)}</td>
-                                <td><span class="${getPnLClass(symbol.realized_pnl)}">${formatCurrency(symbol.realized_pnl)}</span></td>
-                            </tr>
-                        `;
+                    data.symbols.forEach(function(symbol) {
+                        tableHtml += '<tr>'
+                            + '<td>' + escapeHtml(symbol.tradingsymbol) + '</td>'
+                            + '<td>' + escapeHtml(symbol.exchange) + '</td>'
+                            + '<td>' + escapeHtml(symbol.total_buy_qty) + '</td>'
+                            + '<td>' + escapeHtml(symbol.total_sell_qty) + '</td>'
+                            + '<td><span class="' + getPnLClass(symbol.current_position) + '">' + escapeHtml(symbol.current_position) + '</span></td>'
+                            + '<td>' + formatCurrency(symbol.avg_buy_price) + '</td>'
+                            + '<td>' + formatCurrency(symbol.avg_sell_price) + '</td>'
+                            + '<td><span class="' + getPnLClass(symbol.realized_pnl) + '">' + formatCurrency(symbol.realized_pnl) + '</span></td>'
+                            + '</tr>';
                     });
                     
                     tableHtml += '</tbody></table>';
@@ -528,41 +546,30 @@ def trading_dashboard():
             
             async function loadPositions() {
                 try {
-                    const response = await fetch('/api/portfolio-summary');
-                    const data = await response.json();
+                    var response = await fetch('/api/portfolio-summary');
+                    var data = await response.json();
                     
-                    const openPositions = data.symbols ? data.symbols.filter(s => s.current_position !== 0) : [];
+                    var openPositions = data.symbols ? data.symbols.filter(function(s) { return s.current_position !== 0; }) : [];
                     
-                    if (openPositions.length === 0) {
+                    if (!openPositions.length) {
                         document.getElementById('positionsTable').innerHTML = '<p>No open positions</p>';
                         return;
                     }
                     
-                    let tableHtml = `
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Symbol</th>
-                                    <th>Exchange</th>
-                                    <th>Position</th>
-                                    <th>Avg Price</th>
-                                    <th>Realized P&L</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                    `;
+                    var tableHtml = '<table>'
+                        + '<thead><tr>'
+                        + '<th>Symbol</th><th>Exchange</th><th>Position</th><th>Avg Price</th><th>Realized P&amp;L</th>'
+                        + '</tr></thead><tbody>';
                     
-                    openPositions.forEach(position => {
-                        const avgPrice = position.current_position > 0 ? position.avg_buy_price : position.avg_sell_price;
-                        tableHtml += `
-                            <tr>
-                                <td>${position.tradingsymbol}</td>
-                                <td>${position.exchange}</td>
-                                <td><span class="${getPnLClass(position.current_position)}">${position.current_position}</span></td>
-                                <td>${formatCurrency(avgPrice)}</td>
-                                <td><span class="${getPnLClass(position.realized_pnl)}">${formatCurrency(position.realized_pnl)}</span></td>
-                            </tr>
-                        `;
+                    openPositions.forEach(function(position) {
+                        var avgPrice = position.current_position > 0 ? position.avg_buy_price : position.avg_sell_price;
+                        tableHtml += '<tr>'
+                            + '<td>' + escapeHtml(position.tradingsymbol) + '</td>'
+                            + '<td>' + escapeHtml(position.exchange) + '</td>'
+                            + '<td><span class="' + getPnLClass(position.current_position) + '">' + escapeHtml(position.current_position) + '</span></td>'
+                            + '<td>' + formatCurrency(avgPrice) + '</td>'
+                            + '<td><span class="' + getPnLClass(position.realized_pnl) + '">' + formatCurrency(position.realized_pnl) + '</span></td>'
+                            + '</tr>';
                     });
                     
                     tableHtml += '</tbody></table>';
@@ -574,50 +581,34 @@ def trading_dashboard():
             
             async function loadDatabaseStats() {
                 try {
-                    const response = await fetch('/api/database-stats');
-                    const stats = await response.json();
+                    var response = await fetch('/api/database-stats');
+                    var stats = await response.json();
                     
-                    let statusBreakdown = '';
+                    var statusBreakdown = '';
                     if (stats.orders_by_status) {
-                        statusBreakdown = Object.entries(stats.orders_by_status)
-                            .map(([status, count]) => `<li>${status}: ${count}</li>`)
-                            .join('');
+                        Object.entries(stats.orders_by_status).forEach(function(entry) {
+                            statusBreakdown += '<li>' + escapeHtml(entry[0]) + ': ' + escapeHtml(entry[1]) + '</li>';
+                        });
                     }
                     
-                    const statsHtml = `
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 20px;">
-                            <div class="stat-card">
-                                <div class="stat-value neutral">${stats.total_orders || 0}</div>
-                                <div class="stat-label">Total Orders</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value neutral">${stats.total_trades || 0}</div>
-                                <div class="stat-label">Total Trades</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value neutral">${stats.file_size_mb || 0} MB</div>
-                                <div class="stat-label">Database Size</div>
-                            </div>
-                        </div>
-                        
-                        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px;">
-                            <h4>📊 Orders by Status</h4>
-                            <ul style="margin: 10px 0 0 20px;">
-                                ${statusBreakdown || '<li>No orders found</li>'}
-                            </ul>
-                            
-                            <h4 style="margin-top: 15px;">📅 Date Range</h4>
-                            <p style="margin: 5px 0;">
-                                <strong>Earliest:</strong> ${stats.date_range?.earliest ? formatDateTime(stats.date_range.earliest) : 'N/A'}<br>
-                                <strong>Latest:</strong> ${stats.date_range?.latest ? formatDateTime(stats.date_range.latest) : 'N/A'}
-                            </p>
-                            
-                            <h4 style="margin-top: 15px;">💾 Database File</h4>
-                            <p style="margin: 5px 0; font-family: monospace; background: #e9ecef; padding: 5px; border-radius: 3px;">
-                                ${stats.database_file || 'trading_orders.db'}
-                            </p>
-                        </div>
-                    `;
+                    var statsHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;margin-bottom:20px;">'
+                        + '<div class="stat-card"><div class="stat-value neutral">' + escapeHtml(stats.total_orders || 0) + '</div><div class="stat-label">Total Orders</div></div>'
+                        + '<div class="stat-card"><div class="stat-value neutral">' + escapeHtml(stats.total_trades || 0) + '</div><div class="stat-label">Total Trades</div></div>'
+                        + '<div class="stat-card"><div class="stat-value neutral">' + escapeHtml(stats.file_size_mb || 0) + ' MB</div><div class="stat-label">Database Size</div></div>'
+                        + '</div>'
+                        + '<div style="background:#f8f9fa;padding:15px;border-radius:5px;">'
+                        + '<h4>Orders by Status</h4>'
+                        + '<ul style="margin:10px 0 0 20px;">' + (statusBreakdown || '<li>No orders found</li>') + '</ul>'
+                        + '<h4 style="margin-top:15px;">Date Range</h4>'
+                        + '<p style="margin:5px 0;">'
+                        + '<strong>Earliest:</strong> ' + (stats.date_range && stats.date_range.earliest ? formatDateTime(stats.date_range.earliest) : 'N/A') + '<br>'
+                        + '<strong>Latest:</strong> ' + (stats.date_range && stats.date_range.latest ? formatDateTime(stats.date_range.latest) : 'N/A')
+                        + '</p>'
+                        + '<h4 style="margin-top:15px;">Database File</h4>'
+                        + '<p style="margin:5px 0;font-family:monospace;background:#e9ecef;padding:5px;border-radius:3px;">'
+                        + escapeHtml(stats.database_file || 'trading_orders.db')
+                        + '</p>'
+                        + '</div>';
                     
                     document.getElementById('databaseStats').innerHTML = statsHtml;
                 } catch (error) {
@@ -626,81 +617,86 @@ def trading_dashboard():
             }
             
             async function clearTestData() {
-                if (!confirm('🧪 Clear all forward testing data?\n\nThis will remove all orders with FORWARD_TEST_SUCCESS status.\nThis action cannot be undone.')) {
+                if (!confirm('Clear all forward testing data?\\n\\nThis will remove all orders with FORWARD_TEST_SUCCESS status.\\nThis action cannot be undone.')) {
                     return;
                 }
                 
                 try {
-                    const response = await fetch('/api/clear-test-data', {
-                        method: 'POST'
-                    });
-                    
-                    const result = await response.json();
+                    var response = await fetch('/api/clear-test-data', { method: 'POST' });
+                    var result = await response.json();
                     
                     if (result.success) {
-                        alert(`✅ Test data cleared successfully!\n\nDeleted:\n- Test Orders: ${result.deleted_records.test_orders}\n- Test Trades: ${result.deleted_records.test_trades}\n- Total: ${result.deleted_records.total} records`);
+                        alert('Test data cleared successfully!\\n\\nDeleted:\\n- Test Orders: ' + result.deleted_records.test_orders + '\\n- Test Trades: ' + result.deleted_records.test_trades + '\\n- Total: ' + result.deleted_records.total + ' records');
                         await refreshData();
                     } else {
-                        alert(`❌ Failed to clear test data:\n${result.error}`);
+                        alert('Failed to clear test data:\\n' + result.error);
                     }
                 } catch (error) {
-                    alert(`❌ Error clearing test data:\n${error.message}`);
+                    alert('Error clearing test data:\\n' + error.message);
                 }
             }
             
             async function clearAllData() {
-                const confirmText = prompt(
-                    '⚠️ DANGER: Clear ALL database data?\n\n' +
-                    'This will permanently delete:\n' +
-                    '• All orders (live and test)\n' +
-                    '• All trades\n' +
-                    '• All PnL data\n' +
-                    '• All statistics\n\n' +
-                    'Type "CONFIRM_DELETE_ALL_DATA" to proceed:'
+                var confirmText = prompt(
+                    'DANGER: Clear ALL database data?\\n\\n'
+                    + 'This will permanently delete:\\n'
+                    + '- All orders (live and test)\\n'
+                    + '- All trades\\n'
+                    + '- All PnL data\\n'
+                    + '- All statistics\\n\\n'
+                    + 'Type "CONFIRM_DELETE_ALL_DATA" to proceed:'
                 );
                 
                 if (confirmText !== 'CONFIRM_DELETE_ALL_DATA') {
-                    alert('❌ Deletion cancelled. Confirmation text did not match.');
+                    alert('Deletion cancelled. Confirmation text did not match.');
                     return;
                 }
                 
                 try {
-                    const response = await fetch(`/api/clear-database?confirm_token=${encodeURIComponent(confirmText)}`, {
-                        method: 'POST'
+                    // FIX 5: confirm_token sent in POST body instead of query string
+                    //         to avoid leaking it in server logs and browser history.
+                    var response = await fetch('/api/clear-database', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ confirm_token: confirmText })
                     });
                     
-                    const result = await response.json();
+                    var result = await response.json();
                     
                     if (result.success) {
-                        alert(`✅ All data cleared successfully!\n\nDeleted:\n- Orders: ${result.deleted_records.orders}\n- Trades: ${result.deleted_records.trades}\n- PnL Records: ${result.deleted_records.pnl_summary}\n- Total: ${result.deleted_records.total} records`);
+                        alert('All data cleared successfully!\\n\\nDeleted:\\n- Orders: ' + result.deleted_records.orders + '\\n- Trades: ' + result.deleted_records.trades + '\\n- PnL Records: ' + result.deleted_records.pnl_summary + '\\n- Total: ' + result.deleted_records.total + ' records');
                         await refreshData();
                     } else {
-                        alert(`❌ Failed to clear database:\n${result.error}`);
+                        alert('Failed to clear database:\\n' + result.error);
                     }
                 } catch (error) {
-                    alert(`❌ Error clearing database:\n${error.message}`);
+                    alert('Error clearing database:\\n' + error.message);
                 }
             }
             
             async function refreshData() {
-                await loadStats();
+                clearGlobalError();
                 
-                if (currentTab === 'orders') {
-                    await loadOrders();
-                } else if (currentTab === 'pnl') {
-                    await loadPnL();
-                } else if (currentTab === 'positions') {
-                    await loadPositions();
-                } else if (currentTab === 'database') {
-                    await loadDatabaseStats();
+                try {
+                    await loadStats();
+                    
+                    if (currentTab === 'orders') {
+                        await loadOrders();
+                    } else if (currentTab === 'pnl') {
+                        await loadPnL();
+                    } else if (currentTab === 'positions') {
+                        await loadPositions();
+                    } else if (currentTab === 'database') {
+                        await loadDatabaseStats();
+                    }
+                } catch (error) {
+                    showGlobalError('Error loading data: ' + error.message);
                 }
             }
             
             // Initial load
-            document.addEventListener('DOMContentLoaded', async function() {
-                await refreshData();
-                
-                // Auto-refresh every 30 seconds
+            document.addEventListener('DOMContentLoaded', function() {
+                refreshData();
                 setInterval(refreshData, 30000);
             });
         </script>
@@ -725,11 +721,6 @@ def get_portfolio_summary():
     """API endpoint to get portfolio summary with PnL"""
     try:
         portfolio = order_db.get_portfolio_summary()
-        
-        # Add total orders count
-        recent_orders = order_db.get_recent_orders(1000)  # Get more orders for count
-        portfolio['total_orders'] = len(recent_orders)
-        
         return portfolio
     except Exception as e:
         logger.error(f"Failed to get portfolio summary: {e}", exc_info=True)
@@ -740,7 +731,6 @@ def get_symbol_pnl(symbol: str, exchange: Optional[str] = Query(None)):
     """API endpoint to get PnL for a specific symbol"""
     try:
         if not exchange:
-            # Try to determine exchange from recent orders
             orders = order_db.get_orders_by_symbol(symbol)
             if orders:
                 exchange = orders[0]['exchange']
@@ -763,14 +753,16 @@ def get_database_stats():
         logger.error(f"Failed to get database stats: {e}", exc_info=True)
         return JSONResponse(content={"error": "Failed to fetch database stats"}, status_code=500)
 
+# FIX 6: confirm_token now read from POST body (dict) instead of query string.
+#         Also changed import to include Body at the top of the file.
 @router.post("/api/clear-database")
-def clear_database(confirm_token: str = Query(...)):
+def clear_database(payload: dict = Body(...)):
     """
-    API endpoint to clear all database data
-    
-    Requires confirmation token: CONFIRM_DELETE_ALL_DATA
+    API endpoint to clear all database data.
+    Requires JSON body: { "confirm_token": "CONFIRM_DELETE_ALL_DATA" }
     """
     try:
+        confirm_token = payload.get("confirm_token", "")
         result = order_db.clear_all_data(confirm_token)
         
         if result["success"]:
@@ -791,3 +783,23 @@ def clear_test_data():
     except Exception as e:
         logger.error(f"Failed to clear test data: {e}", exc_info=True)
         return JSONResponse(content={"error": "Failed to clear test data"}, status_code=500)
+
+@router.get("/debug", response_class=HTMLResponse)
+def debug_dashboard():
+    """Debug dashboard to test API endpoints"""
+    try:
+        with open("debug_dashboard.html", "r") as f:
+            content = f.read()
+        return HTMLResponse(content=content)
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>Debug file not found</h1>", status_code=404)
+
+@router.get("/test", response_class=HTMLResponse)
+def test_dashboard():
+    """Simple test dashboard"""
+    try:
+        with open("simple_dashboard_test.html", "r") as f:
+            content = f.read()
+        return HTMLResponse(content=content)
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>Test file not found</h1>", status_code=404)
