@@ -263,8 +263,8 @@ def place_order(
         
         try:
             # 🎯 ATTEMPT 1: Try placing regular MARKET order
-            # order_id = kite.place_order(**order_params)
-            order_id=1
+            order_id = kite.place_order(**order_params)
+            #order_id=1
             logger.info(f"✅ {action.upper()} order placed successfully for {tradingsymbol}. Order ID: {order_id}")
             
             # Update database with successful order
