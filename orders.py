@@ -145,7 +145,8 @@ def place_order(
     quantity: int = 1,
     webhook_timestamp: str = None,
     tv_symbol: str = None,
-    request_id: str = None
+    request_id: str = None,
+    product_override: Optional[str] = None
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Place a MARKET order via the KiteConnect API with duplicate order checking and market protection fallback.
@@ -190,8 +191,12 @@ def place_order(
     try:
         # 🚀 STEP 1: Determine order parameters
         exchange = segment
-        if segment == "NFO":
-            product_type = "NRML"  # Use string for forward testing compatibility
+        # product_override is set by the caller when the context-dependent product type
+        # (e.g. MIS for NSE short/cover) cannot be inferred from action alone.
+        if product_override:
+            product_type = product_override
+        elif segment in ["NFO", "MCX"]:
+            product_type = "NRML"
         elif segment == "NSE":
             product_type = "CNC"
         else:
@@ -248,13 +253,21 @@ def place_order(
             return (None, error_msg)
         
         # 🎯 STEP 4: Prepare order parameters for live placement
+        # Resolve kite product constant from product_type string
+        if product_type == "NRML":
+            kite_product = kite.PRODUCT_NRML
+        elif product_type == "MIS":
+            kite_product = kite.PRODUCT_MIS
+        else:
+            kite_product = kite.PRODUCT_CNC
+
         order_params = {
             "tradingsymbol": tradingsymbol,
             "exchange": exchange,
-            "transaction_type": kite.TRANSACTION_TYPE_BUY if action == "buy" else kite.TRANSACTION_TYPE_SELL,
+            "transaction_type": kite.TRANSACTION_TYPE_BUY if transaction_type == "BUY" else kite.TRANSACTION_TYPE_SELL,
             "quantity": quantity,
             "order_type": kite.ORDER_TYPE_MARKET,
-            "product": kite.PRODUCT_NRML if segment == "NFO" else kite.PRODUCT_CNC,
+            "product": kite_product,
             "variety": kite.VARIETY_REGULAR
         }
         
@@ -288,9 +301,11 @@ def place_order(
                     ltp = price
                     
                     buffer_multiplier = 0.005  # 0.5% buffer
-                    if action.upper() == "BUY":
+                    # Use transaction_type (BUY/SELL) rather than action to support
+                    # "cover" (BUY to close short) and "short" (SELL to open short)
+                    if transaction_type == "BUY":
                         protected_price = ltp * (1 + buffer_multiplier)
-                    elif action.upper() == "SELL":
+                    else:  # SELL
                         protected_price = ltp * (1 - buffer_multiplier)
                     
                     # 🛡️ ATTEMPT 2: Retry with market protection enabled
